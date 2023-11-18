@@ -1,4 +1,6 @@
+
 # Load the libraries
+
 library(tidyverse)
 library(stringr)
 library(stats)
@@ -8,83 +10,111 @@ library(ggplot2)
 
 # Read data
 
-# For models M1 through M3 we are only using transcriptomic data
+# METAT: metatranscriptomic data
+# METAG: metagenomic data
 
-metat <- read.table("data/part3/true-exp.mtx_abunds.tsv", header = TRUE,
+# For models M1 and M2 we are only using METAT data. For model M4, we will need both METAT and METAG data
+
+metat <- read.table("data/part3/true-exp/true-exp.mtx_abunds.tsv.gz", header = TRUE,
                  sep = "\t", row.names=1)
 
-metag <- read.table("data/part3/true-exp.mgx_abunds.tsv", header = TRUE,
+metag <- read.table("data/part3/true-exp/true-exp.mgx_abunds.tsv.gz", header = TRUE,
                     sep="\t", row.names=1)
 
-# Ground truth data
+# Look at the data
+# metat table contains Phenotype as well as readcounts for 100 samples
+# each `gene name` is composed of 'species' name (ex. BUG0001), and 'orthologous group' name (ex. GROUP000001)
+metat[0:5, 0:5]
 
-ground_truth <- read.table("data/part3/true-exp.mtx_spiked.tsv", header = FALSE,
-                           sep = "\t",  col.names = c('gene_name', 'GT'))
+# Ground truth data contains a list of `genes` that are differentially expressed between phenotypes
+
+ground_truth <- read.table("data/part3/true-exp/true-exp.mtx_spiked.tsv.gz", 
+                           header = FALSE,sep = "\t", 
+                           col.names = c('gene_name', 'GT'))
+head(ground_truth)
+dim(ground_truth)
 
 
-# todo gz the file
+# Preprocess the data
 
-# For models M4 through M6, we are using transcriptomic and genomic data
-
-# todo load dataset
-
-# metat_metag <- read.table(...)
-
-
-# Preprocess the data (might do this before the workshop)
-# Create metatdata table (i.e. phenotype for each sample)
+# Create metatdata table (i.e. phenotype  for each sample)
 metat_pheno <- metat[1:2, ] %>%
   t() %>%
   data.frame() 
+
+# Remove metadata from METAT column
 metat <- metat[-c(1, 2), ]
 
+# Save METAG sequencing depth, we will need it later
 metag_seqdepth <- metag[2,] %>% t()
 colnames(metag_seqdepth) <- c('metag_seqdepth')
+
+# Remove metadata from METAG table
 metag <- metag[-c(1, 2), ]
-# Exclude metadata from the table
 
 
-# Assign each 'transcript' to a 'taxonomy'
+# Assign each 'transcript' to a 'species'
 metat$bug <- str_split_fixed(rownames(df), "_", 2)[, 1]
 
-# Create table with 'taxonomic' abundances 
+# Create table with 'taxonomic' abundances based on METAT data 
+# We will need this for model M2.
+
 bug_metat <- metat %>%
   group_by(bug) %>%
   summarize(across(all_of(sample_cols), sum)) %>% 
   pivot_longer(cols = -bug, names_to = "sample_id", values_to = "bug_abundance") 
 
-sample_cols <- grep("SAMPLE", names(df), value = TRUE)
+head(bug_metat)
+
+# Get sample names
+sample_cols <- grep("SAMPLE", names(metat), value = TRUE)
 
 
-# Go through example of one gene 
+# Go through example of building all the models for one gene 
 
 example_gene = "BUG0013_GROUP001489"
+example_gene_bug <- str_split_fixed(example_gene, "_", 2)[, 1]
 
-example_gene = "BUG0077_GROUP001555"
+# Get METAT data for the gene
 gene_df <- metat[example_gene, sample_cols] %>% t() %>% as.data.frame()
+
+# Get METAG data for the gene
 gene_metag <- metag[example_gene, sample_cols] %>% t() %>% as.data.frame() 
 colnames(gene_metag) <- c("metag")
-gene_df[[example_gene]] %>% hist()
 
-# Add bug abundance and phenotype data
-current_bug <- str_split_fixed(example_gene, "_", 2)[, 1]
-gene_bug_abundance <- bug_metat %>% filter(bug == current_bug) %>% column_to_rownames('sample_id')
+#gene_df[[example_gene]] %>% hist()
+
+# Get species abundance
+gene_bug_abundance <- bug_metat %>% filter(bug == example_gene_bug) %>% 
+                      column_to_rownames('sample_id')
+
+# Put all of this together with phenotype data
 gene_df <- cbind(metat_pheno, gene_df, gene_metag, gene_bug_abundance, metag_seqdepth)
+
+head(gene_df)
 
 # Filtering
 
-## Semi-strict: Remove sample if both gene abundance and bug abundance are 0
-gene_df_semi <- gene_df %>% filter((!!as.symbol(example_gene)) > 0 | bug_abundance > 0) # 63 smaples
+# Semi-strict: Remove sample if both gene abundance and bug abundance are 0 (for models M1 and M2)
+gene_df_semi <- gene_df %>% filter((!!as.symbol(example_gene)) > 0 | bug_abundance > 0) # 63 samples
 
-## Strict: Remove sample if either gene abundance and bug abundance are 0
+# For M4, we filter based on METAG abundance of that gene
+gene_df_semistrict_metag<- gene_df %>% filter((!!as.symbol(example_gene)) > 0 & metag > 0)
+
+# Strict: Remove sample if either gene abundance and bug abundance are 0 (for models M1 and M2)
 gene_df_strict <- gene_df %>% filter((!!as.symbol(example_gene)) > 0 & bug_abundance > 0) # 47 samples
+# For M4, we filter based on METAG abundance of that gene
 gene_df_strict_metag<- gene_df %>% filter((!!as.symbol(example_gene)) > 0 & metag > 0)
 
-# Normalization /Models
-
+# Normalization / Models
+# We will do this example using the 'strict' filtered dataframe
 ##  Model 1: Total sum scaling
+
 M1_col <- paste0(example_gene, "_M1")
+
+# `SeqDepth` is METAT total sequencing depth 
 gene_df_strict['tss'] <- gene_df_strict[example_gene]/gene_df_strict['SeqDepth']
+
 # Add pseudo count and log transform
 pseudo_count <- min(gene_df_strict[gene_df_strict[, 'tss'] > 0, 'tss']) / 2
 gene_df_strict[M1_col] <- log10(gene_df_strict[, 'tss'] + pseudo_count)
@@ -93,24 +123,27 @@ gene_df_strict[M1_col] <- log10(gene_df_strict[, 'tss'] + pseudo_count)
 ## Model 2: Within taxon normalisation
 
 M2_col <- paste0(example_gene, "_M2")
+# Normalising by species abundance
 gene_df_strict[M2_col] <- gene_df_strict[example_gene]/gene_df_strict['bug_abundance']
+# Add pseudo count and log transform
 pseudo_count <- min(gene_df_strict[gene_df_strict[, M2_col] > 0, M2_col], na.rm=TRUE) / 2
 gene_df_strict[M2_col] <- log10(gene_df_strict[, M2_col] + pseudo_count)
 
 
-## Model 4: RNA/DNA ration
+## Model 4: RNA/DNA ratio
+
 M4_col <- paste0(example_gene, "_M4")
+# Note using a different dataframe here, because filtering was done differently
+# First perform total sum scaling for both METAT and METAG data
 gene_df_strict_metag['tss'] <- gene_df_strict_metag[example_gene]/gene_df_strict_metag['SeqDepth']
 gene_df_strict_metag['metag_tss'] = gene_df_strict_metag['metag']/gene_df_strict_metag['metag_seqdepth']
+# Calculate ration of METAT/METAG abundance
 gene_df_strict_metag[M4_col] <- gene_df_strict_metag['tss']/gene_df_strict_metag['metag_tss']
+# Add pseudocount and log transform
 pseudo_count <- min(gene_df_strict_metag[gene_df_strict_metag[, M4_col] > 0, M4_col], na.rm=TRUE) / 2
 gene_df_strict_metag[M4_col] <- log10(gene_df_strict_metag[, M4_col] + pseudo_count)
 
 
-
-
-gene_df$BUG0034_GROUP001402_M1 %>% hist()
-gene_df$BUG0034_GROUP001402_M2 %>% hist()
 
 # Run linear model
 
