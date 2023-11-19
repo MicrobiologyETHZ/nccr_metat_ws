@@ -419,8 +419,10 @@ buildNumber.properties
 /scratch
 .snakemake/
 
+
 # added by Anna for general purposes :)
 
 .config/
 .local/
 code/notebooks/
+!/data/part3/

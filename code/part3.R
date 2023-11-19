@@ -15,10 +15,10 @@ library(ggplot2)
 
 # For models M1 and M2 we are only using METAT data. For model M4, we will need both METAT and METAG data
 
-metat <- read.table("data/part3/true-exp/true-exp.mtx_abunds.tsv.gz", header = TRUE,
+metat <- read.table("datasets/part3/true-exp/true-exp.mtx_abunds.tsv.gz", header = TRUE,
                  sep = "\t", row.names=1)
 
-metag <- read.table("data/part3/true-exp/true-exp.mgx_abunds.tsv.gz", header = TRUE,
+metag <- read.table("datasets/part3/true-exp/true-exp.mgx_abunds.tsv.gz", header = TRUE,
                     sep="\t", row.names=1)
 
 # Look at the data
@@ -28,7 +28,7 @@ metat[0:5, 0:5]
 
 # Ground truth data contains a list of `genes` that are differentially expressed between phenotypes
 
-ground_truth <- read.table("data/part3/true-exp/true-exp.mtx_spiked.tsv.gz", 
+ground_truth <- read.table("datasets/part3/true-exp/true-exp.mtx_spiked.tsv.gz", 
                            header = FALSE,sep = "\t", 
                            col.names = c('gene_name', 'GT'))
 head(ground_truth)
@@ -101,13 +101,15 @@ gene_df_semi <- gene_df %>% filter((!!as.symbol(example_gene)) > 0 | bug_abundan
 # For M4, we filter based on METAG abundance of that gene
 gene_df_semistrict_metag<- gene_df %>% filter((!!as.symbol(example_gene)) > 0 & metag > 0)
 
-# Strict: Remove sample if either gene abundance and bug abundance are 0 (for models M1 and M2)
+# Strict: Remove sample if either gene abundance and species abundance are 0 (for models M1 and M2)
 gene_df_strict <- gene_df %>% filter((!!as.symbol(example_gene)) > 0 & bug_abundance > 0) # 47 samples
+
 # For M4, we filter based on METAG abundance of that gene
 gene_df_strict_metag<- gene_df %>% filter((!!as.symbol(example_gene)) > 0 & metag > 0)
 
 # Normalization / Models
 # We will do this example using the 'strict' filtered dataframe
+
 ##  Model 1: Total sum scaling
 
 M1_col <- paste0(example_gene, "_M1")
@@ -137,7 +139,8 @@ M4_col <- paste0(example_gene, "_M4")
 # First perform total sum scaling for both METAT and METAG data
 gene_df_strict_metag['tss'] <- gene_df_strict_metag[example_gene]/gene_df_strict_metag['SeqDepth']
 gene_df_strict_metag['metag_tss'] = gene_df_strict_metag['metag']/gene_df_strict_metag['metag_seqdepth']
-# Calculate ration of METAT/METAG abundance
+
+# Calculate ratio of METAT/METAG abundance
 gene_df_strict_metag[M4_col] <- gene_df_strict_metag['tss']/gene_df_strict_metag['metag_tss']
 # Add pseudocount and log transform
 pseudo_count <- min(gene_df_strict_metag[gene_df_strict_metag[, M4_col] > 0, M4_col], na.rm=TRUE) / 2
@@ -149,6 +152,7 @@ gene_df_strict_metag[M4_col] <- log10(gene_df_strict_metag[, M4_col] + pseudo_co
 
 fixed_effects <- c("Phenotype")
 
+# This function gets the coefficients, std error and p-values from the fit linear model
 summary_function <- function(fit) {
   lm_summary <- summary(fit)$coefficients
   para <- as.data.frame(lm_summary)[-1, -3]
@@ -156,6 +160,9 @@ summary_function <- function(fit) {
   return(para)
 }
 
+# For model M1 we are modelling log trnasformed TSS expression values (M1_col) against the phenotype
+
+# For model M2 are modelling log transformed taxon normalised expression values (M2_col) against the phenotype
 
 model_cols <- c(M1_col, M2_col)
 models <- list()
@@ -167,6 +174,8 @@ for (model_col in model_cols){
     models[[as.symbol(model_col)]] <- summary_function(md)
 }
 
+# For model M4 we are modelling RNA/DNA ratio (M4_col) against the phenotype
+
 formula <- paste0(M4_col, "~", "Phenotype")
 print(formula)
 md <- glm(formula = formula, data = gene_df_strict_metag, family = gaussian()) %>%
@@ -176,7 +185,7 @@ summary <- do.call(rbind, models)
 
 
 
-# Putting this together into a function
+# To run this on all of the genes, we're putting this together into a function
 
 # Run the model for each gene
 
@@ -243,6 +252,8 @@ model_gene <- function(gene_df, expr_col, filter_strategy='strict', fixed_effect
 }
 
 
+# To make the code run faster, we're only going to test a subset of genes
+# Feel free to run this on the full dataframe
 test_df <- metat %>% select(all_of(sample_cols)) %>% sample_n(1000, replace=FALSE)
 
 outputs <- list()
@@ -266,7 +277,7 @@ outputs$model <- str_split_fixed(rownames(outputs), "_", 3)[, 3]
 outputs$gene_name <- str_split_fixed(rownames(outputs), "_M", 2)[, 1]
 res <- outputs%>% select(gene_name, "Pr(>|t|)", model) %>% pivot_wider(names_from = model, values_from = "Pr(>|t|)")
 
-
+# Multiple testing correction 
 res$M1_qvals <- as.numeric(p.adjust(res[["M1"]], method = "BH"))
 res$M2_qvals <- as.numeric(p.adjust(res[["M2"]], method = "BH"))
 res$M4_qvals <- as.numeric(p.adjust(res[["M4"]], method = "BH"))
@@ -277,41 +288,36 @@ res$M4_qvals <- as.numeric(p.adjust(res[["M4"]], method = "BH"))
 res <- res %>% 
         full_join(ground_truth, by='gene_name')
 
+# To calculate FPR and TPR we assign all 'real' differentially expressed genes 1 and the rest 0
+# For model predictions, we assign 1 to all genes with q-val < 0.01, 0 otherwise
 res <- res %>% mutate(GT = abs(coalesce(as.numeric(GT), 0))) %>% 
-      mutate(M1_predicted = as.numeric(M1_qvals < 0.01), M2_predicted = as.numeric(M2_qvals < 0.01),
-             M4_predicted = as.numeric(M4_qvals < 0.01))
+      mutate(M1_predicted = as.numeric(M1_qvals < 0.05), M2_predicted = as.numeric(M2_qvals < 0.05),
+             M4_predicted = as.numeric(M4_qvals < 0.05))
 
 
 # 
 
-predicted_M1 <- res$M1_predicted
-predicted_M2 <- res$M2_predicted
-predicted_M4 <- res$M4_predicted
+calculate_rates <- function(predicted, reference){
+  u <- union(predicted, reference)
+  xtab <- table(factor(predicted, u), factor(reference, u))
+  cm <- caret::confusionMatrix(xtab, positive = "1")
+  
+}
+
+
 reference <- res$GT
 
 metrics <- list()
-
-
-u <- union(predicted_M1, reference)
-xtab <- table(factor(predicted_M1, u), factor(reference, u))
-cm <- caret::confusionMatrix(xtab, positive = "1")
-
-
-metrics$M1 <- c(cm$byClass[["Sensitivity"]], 1-cm$byClass[['Specificity']])
+cm_M1 <- calculate_rates(res$M1_predicted, reference)
+metrics$M1 <- c(cm_M1$byClass[["Sensitivity"]], 1-cm_M1$byClass[['Specificity']])
 names(metrics$M1) <- c('TPR', 'FRP')
 
-
-u <- union(predicted_M2, reference)
-xtab <- table(factor(predicted_M2, u), factor(reference, u))
-cm <- caret::confusionMatrix(xtab, positive = "1")
-metrics$M2 <- c(cm$byClass[["Sensitivity"]], 1-cm$byClass[['Specificity']])
+cm_M2 <- calculate_rates(res$M2_predicted, reference)
+metrics$M2 <- c(cm_M2$byClass[["Sensitivity"]], 1-cm_M2$byClass[['Specificity']])
 names(metrics$M2) <- c('TPR', 'FRP')
 
-
-u <- union(predicted_M4, reference)
-xtab <- table(factor(predicted_M4, u), factor(reference, u))
-cm <- caret::confusionMatrix(xtab, positive = "1")
-metrics$M4 <- c(cm$byClass[["Sensitivity"]], 1-cm$byClass[['Specificity']])
+cm_M4 <- calculate_rates(res$M4_predicted, reference)
+metrics$M4 <- c(cm_M4$byClass[["Sensitivity"]], 1-cm_M4$byClass[['Specificity']])
 names(metrics$M4) <- c('TPR', 'FRP')
 
 
@@ -324,107 +330,10 @@ final_df <- data.frame(metrics) %>% rownames_to_column('metric') %>%
 
 
 # Basic barplot
+
 p<-ggplot(data=final_df, aes(x=Model, y=Proportion)) +
   geom_bar(stat="identity")+ facet_wrap('metric')
 p
 
 
 # The end
-#............................
-      t() %>%
-      as.data.frame()%>%
-      rownames_to_column(var = "sample_id") %>% 
-      pivot_longer(cols = -c(sample_id, Phenotype, SeqDepth), names_to = "gene_name", values_to = "raw_cnt")
-
-
-write.csv(data, "data/part3/true-exp.mtx_abunds.pivot.tsv")
-
-
-process_sample <-function(df, names){
-    print('starting')
-    names(df) <- names
-    df <- df %>%
-      t() %>%
-      as.data.frame()%>%
-      rownames_to_column(var = "sample_id") %>% 
-    pivot_longer(cols = -c(sample_id, Phenotype, SeqDepth), names_to = "gene_name", values_to = "raw_cnt")
-    df$bug <- str_split_fixed(df$gene_name, "_", 2)[,1]
-  # Calculate 'tss' column
-    df$tss <-  df$raw_cnt / df$SeqDepth * 1e6
-
-  # Calculate 'bug_cnt' and merge it into the original dataframe
-    bug_cnt_df <- df %>%
-      group_by(sample_id, bug) %>%
-      summarise(bug_cnt = sum(raw_cnt)) 
-    df <- df %>%
-      left_join(bug_cnt_df, by = c("sample_id", "bug"))
-    # Calculate 'within_bug' and 'bug_perc'
-    df <- df %>%
-      mutate(within_bug = raw_cnt / bug_cnt * 1e6,
-             bug_perc = bug_cnt / SeqDepth, sample_id='x')
-
-    return (df)
-}
-
-
-res <- sapply(data, process_sample, names=rownames(data)) %>% as.data.frame() 
-
-# Reshape the data
-df <- df %>%
-  pivot_longer(cols = -c(sample_id, Phenotype, SeqDepth), names_to = "gene_name", values_to = "raw_cnt")
-library(stringr)
-df$bug <- str_split_fixed(df$gene_name, "_", 2)[,1]
-# Calculate 'tss' column
-df$tss <-  df$raw_cnt / df$SeqDepth * 1e6
-duckdb_register(con, "df", df)
-# Calculate 'bug_cnt' and merge it into the original dataframe
-bug_cnt_df <- tbl(con, 'df') %>%
-  group_by(sample_id, bug) %>%
-  summarise(bug_cnt = sum(raw_cnt)) %>%
-   collect()
-
-dbWriteTable(con, "bug_cnt_df", bug_cnt_df)
-
-
-# Calculate 'bug_cnt' and merge it into the original dataframe
-bug_cnt_df <- df %>%
-  group_by(sample_id, bug) %>%
-  summarise(bug_cnt = sum(raw_cnt)) 
-
-
-df <- df %>%
-  left_join(bug_cnt_df, by = c("sample_id", "bug"))
-
-# Calculate 'within_bug' and 'bug_perc'
-df <- df %>%
-  mutate(within_bug = raw_cnt / bug_cnt * 1e6,
-         bug_perc = bug_cnt / SeqDepth)
-
-# Create 'semi_df' and 'strict_df'
-semi_df <- df %>%
-  filter(raw_cnt > 0 | bug > 0)
-
-strict_df <- df %>%
-  filter(raw_cnt > 0 & bug > 0)
-
-
-
-
-
-#Filter
-
-gene_df <- gene_df %>% filter((!!as.symbol(expr_col)) > 0 & bug_abundance > 0)
-pseudo_count <- min(gene_df[gene_df[, expr_col] > 0, expr_col]) / 2
-gene_df[paste0(expr_col, "_log")] <- log10(gene_df[, expr_col] + pseudo_count)
-if (!is.null(gene_df) && any(fixed_effects %in% colnames(gene_df))) {
-  formula <- paste0(expr_col, "_log ~ ", paste(fixed_effects, collapse = " + "))
-  print(formula)
-  md <- glm(formula = formula, data = gene_df, family = gaussian()) %>%
-    suppressWarnings(suppressMessages(update(., .~.)))
-  outputs[[expr_col]] <-  summary_function(md)
-}
-
-}
-outputs <- do.call(rbind, outputs)
-
-#outputs$qval <- as.numeric(p.adjust(outputs[["Pr(>|t|)"]], method = "BH"))
