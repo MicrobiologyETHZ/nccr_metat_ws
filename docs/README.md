@@ -1,4 +1,6 @@
 
+Binder link: [![Binder](http://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/MicrobiologyETHZ/nccr_metat_ws/HEAD)
+
 # Part 1
 
 
