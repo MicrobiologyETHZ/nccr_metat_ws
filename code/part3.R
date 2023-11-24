@@ -54,7 +54,7 @@ metag <- metag[-c(1, 2), ]
 
 
 # Assign each 'transcript' to a 'species'
-metat$bug <- str_split_fixed(rownames(df), "_", 2)[, 1]
+metat$bug <- str_split_fixed(rownames(metat), "_", 2)[, 1]
 
 # Create table with 'taxonomic' abundances based on METAT data 
 # We will need this for model M2.
