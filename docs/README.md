@@ -1,10 +1,11 @@
 
 Binder link: [![Binder](http://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/MicrobiologyETHZ/nccr_metat_ws/HEAD)
 
-# Part 1
+# Part 1: Analysis using matching metatranscriptomic/metagenomic data 
+![metat_metag](/docs/images/metat_metag.png)
 
-
-# Part 2
+# Part 2: Analysis using metatranscriptomic data alone (defined communities) 
+![metat_comm](/docs/images/metat_community.png)
 
 # Part 3: Differential expression analysis with linear models
 
