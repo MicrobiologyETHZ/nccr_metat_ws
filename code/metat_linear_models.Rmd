@@ -1,7 +1,12 @@
+---
+title: "METAT Workshop: linear models"
+output: html_document
+date: '2023-12-03'
+---
 
-Binder link: [![Binder](http://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/MicrobiologyETHZ/nccr_metat_ws/HEAD)
-
-
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
 
 # Differential expression analysis with linear models
 

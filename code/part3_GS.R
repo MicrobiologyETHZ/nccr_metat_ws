@@ -2,11 +2,10 @@
 # Load the libraries
 
 library(tidyverse)
-library(stringr)
 library(stats)
 library(stats4)
 library(caret)
-library(ggplot2)
+
 
 # Read data
 
@@ -24,11 +23,13 @@ metag <- read.table("datasets/part3/true-exp/true-exp.mgx_abunds.tsv.gz", header
 # Look at the data
 # metat table contains Phenotype as well as readcounts for 100 samples
 # each `gene name` is composed of 'species' name (ex. BUG0001), and 'orthologous group' name (ex. GROUP000001)
-metat[0:5, 0:5]
+metat[3:8, 0:5]
+
+
 
 # Ground truth data contains a list of `genes` that are differentially expressed between phenotypes
 
-ground_truth <- read.table("datasets/part3/true-exp/true-exp.mtx_spiked.tsv.gz", 
+ground_truth <- read.table("../datasets/part3/true-exp/true-exp.mtx_spiked.tsv.gz", 
                            header = FALSE,sep = "\t", 
                            col.names = c('gene_name', 'GT'))
 head(ground_truth)
@@ -56,6 +57,9 @@ metag <- metag[-c(1, 2), ]
 # Assign each 'transcript' to a 'species'
 metat$bug <- str_split_fixed(rownames(metat), "_", 2)[, 1]
 
+# Get sample names
+sample_cols <- grep("SAMPLE", names(metat), value = TRUE)
+
 # Create table with 'taxonomic' abundances based on METAT data 
 # We will need this for model M2.
 
@@ -65,9 +69,6 @@ bug_metat <- metat %>%
   pivot_longer(cols = -bug, names_to = "sample_id", values_to = "bug_abundance") 
 
 head(bug_metat)
-
-# Get sample names
-sample_cols <- grep("SAMPLE", names(metat), value = TRUE)
 
 
 # Go through example of building all the models for one gene 
@@ -107,6 +108,8 @@ gene_df_strict <- gene_df %>% filter((!!as.symbol(example_gene)) > 0 & bug_abund
 # For M4, we filter based on METAG abundance of that gene
 gene_df_strict_metag<- gene_df %>% filter((!!as.symbol(example_gene)) > 0 & metag > 0)
 
+
+
 # Normalization / Models
 # We will do this example using the 'strict' filtered dataframe
 
@@ -145,6 +148,25 @@ gene_df_strict_metag[M4_col] <- gene_df_strict_metag['tss']/gene_df_strict_metag
 # Add pseudocount and log transform
 pseudo_count <- min(gene_df_strict_metag[gene_df_strict_metag[, M4_col] > 0, M4_col], na.rm=TRUE) / 2
 gene_df_strict_metag[M4_col] <- log10(gene_df_strict_metag[, M4_col] + pseudo_count)
+
+
+toplot<-gene_df_strict_metag %>%
+  rownames_to_column("sample") %>%
+  full_join(rownames_to_column(gene_df_strict,"sample"),by="sample") %>%
+  select(sample,starts_with("BUG0013_GROUP001489_"))
+
+ggplot(data=toplot,aes(x=BUG0013_GROUP001489_M1,y=BUG0013_GROUP001489_M2)) +
+  geom_point() +
+  theme_bw()
+ggplot(data=toplot,aes(x=BUG0013_GROUP001489_M1,y=BUG0013_GROUP001489_M4)) +
+  geom_point() +
+  theme_bw()
+ggplot(data=toplot,aes(x=BUG0013_GROUP001489_M2,y=BUG0013_GROUP001489_M4)) +
+  geom_point() +
+  theme_bw()
+
+
+
 
 
 
@@ -310,15 +332,15 @@ reference <- res$GT
 metrics <- list()
 cm_M1 <- calculate_rates(res$M1_predicted, reference)
 metrics$M1 <- c(cm_M1$byClass[["Sensitivity"]], 1-cm_M1$byClass[['Specificity']])
-names(metrics$M1) <- c('TPR', 'FRP')
+names(metrics$M1) <- c('TPR', 'FPR')
 
 cm_M2 <- calculate_rates(res$M2_predicted, reference)
 metrics$M2 <- c(cm_M2$byClass[["Sensitivity"]], 1-cm_M2$byClass[['Specificity']])
-names(metrics$M2) <- c('TPR', 'FRP')
+names(metrics$M2) <- c('TPR', 'FPR')
 
 cm_M4 <- calculate_rates(res$M4_predicted, reference)
 metrics$M4 <- c(cm_M4$byClass[["Sensitivity"]], 1-cm_M4$byClass[['Specificity']])
-names(metrics$M4) <- c('TPR', 'FRP')
+names(metrics$M4) <- c('TPR', 'FPR')
 
 
 final_df <- data.frame(metrics) %>% rownames_to_column('metric') %>%
